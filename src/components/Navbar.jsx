@@ -20,6 +20,12 @@ export default function Navbar({ session }) {
               {session && (
                 <Link to="/dashboard" className="text-gray-700 hover:text-indigo-600">Dashboard</Link>
               )}
+              {/* Admin Link - Sirf admin email se login karne par dikhega */}
+              {session?.user?.email === 'admin@digitalheroes.com' && (
+                <Link to="/admin" className="text-gray-700 hover:text-indigo-600 font-medium">
+                  Admin Panel
+                </Link>
+              )}
             </div>
           </div>
           <div className="flex items-center space-x-4">

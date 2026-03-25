@@ -478,7 +478,7 @@ export default function Admin() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subscription</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charity %</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Selected Charity</th>
@@ -544,7 +544,7 @@ export default function Admin() {
         </div>
       )}
 
-      {/* SCORES TAB - View/Edit/Delete All Scores */}
+      {/* SCORES TAB */}
       {activeTab === 'scores' && (
         <div className="bg-white rounded-xl shadow-md overflow-hidden">
           <div className="overflow-x-auto">
@@ -599,7 +599,7 @@ export default function Admin() {
         </div>
       )}
 
-      {/* CHARITIES TAB - Full CRUD */}
+      {/* CHARITIES TAB */}
       {activeTab === 'charities' && (
         <div>
           <div className="bg-white rounded-xl shadow-md p-6 mb-8">
