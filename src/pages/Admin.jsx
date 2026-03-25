@@ -207,32 +207,46 @@ export default function Admin() {
   }
 
   const deleteCharity = async (id) => {
-  if (confirm('Delete this charity? This will remove it from all users.')) {
+  if (confirm('Are you sure you want to delete this charity? This will remove it from all users.')) {
     try {
-      // Step 1: Pehle saare users se charity reference hatao
+      // Remove charity reference from all users first
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ selected_charity_id: null })
         .eq('selected_charity_id', id)
       
       if (updateError) {
+        console.error('Update error:', updateError)
         alert('Error removing charity from users: ' + updateError.message)
         return
       }
       
-      // Step 2: Phir charity delete karo
+      // Then delete the charity
       const { error: deleteError } = await supabase
         .from('charities')
         .delete()
         .eq('id', id)
       
       if (deleteError) {
+        console.error('Delete error:', deleteError)
         alert('Error deleting charity: ' + deleteError.message)
       } else {
         alert('Charity deleted successfully!')
-        fetchAllData() // Refresh the list
+        // Refresh the charities list
+        const { data: charitiesData } = await supabase
+          .from('charities')
+          .select('*')
+          .order('featured', { ascending: false })
+        setCharities(charitiesData || [])
+        // Also refresh users list to update any changes
+        const { data: usersData } = await supabase
+          .from('profiles')
+          .select('*')
+          .order('created_at', { ascending: false })
+        setUsers(usersData || [])
       }
     } catch (err) {
+      console.error('Unexpected error:', err)
       alert('Something went wrong: ' + err.message)
     }
   }
