@@ -207,20 +207,36 @@ export default function Admin() {
   }
 
   const deleteCharity = async (id) => {
-    if (confirm('Delete this charity? This will remove it from all users.')) {
-      const { error } = await supabase
+  if (confirm('Delete this charity? This will remove it from all users.')) {
+    try {
+      // Step 1: Pehle saare users se charity reference hatao
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ selected_charity_id: null })
+        .eq('selected_charity_id', id)
+      
+      if (updateError) {
+        alert('Error removing charity from users: ' + updateError.message)
+        return
+      }
+      
+      // Step 2: Phir charity delete karo
+      const { error: deleteError } = await supabase
         .from('charities')
         .delete()
         .eq('id', id)
       
-      if (error) {
-        alert('Error: ' + error.message)
+      if (deleteError) {
+        alert('Error deleting charity: ' + deleteError.message)
       } else {
-        alert('Charity deleted!')
-        fetchAllData()
+        alert('Charity deleted successfully!')
+        fetchAllData() // Refresh the list
       }
+    } catch (err) {
+      alert('Something went wrong: ' + err.message)
     }
   }
+}
 
   // ==================== DRAW MANAGEMENT ====================
   const generateRandomNumbers = () => {
