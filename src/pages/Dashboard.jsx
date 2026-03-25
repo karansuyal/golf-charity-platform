@@ -10,9 +10,12 @@ export default function Dashboard() {
   const [scoreDate, setScoreDate] = useState('')
   const [loading, setLoading] = useState(true)
   const [charityLoading, setCharityLoading] = useState(false)
+  const [userWinnings, setUserWinnings] = useState([])
+  const [uploading, setUploading] = useState(false)
 
   useEffect(() => {
     fetchUserData()
+    fetchUserWinnings()
   }, [])
 
   const fetchUserData = async () => {
@@ -20,7 +23,6 @@ export default function Dashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     
     if (user) {
-      // Fetch profile
       const { data: profileData } = await supabase
         .from('profiles')
         .select('*')
@@ -28,7 +30,6 @@ export default function Dashboard() {
         .single()
       setProfile(profileData)
 
-      // Fetch scores (last 5)
       const { data: scoresData } = await supabase
         .from('scores')
         .select('*')
@@ -37,7 +38,6 @@ export default function Dashboard() {
         .limit(5)
       setScores(scoresData || [])
 
-      // Fetch charities
       const { data: charitiesData } = await supabase
         .from('charities')
         .select('*')
@@ -48,6 +48,18 @@ export default function Dashboard() {
       }
     }
     setLoading(false)
+  }
+
+  const fetchUserWinnings = async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data } = await supabase
+        .from('winners')
+        .select('*, draws(draw_date, winning_numbers)')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+      setUserWinnings(data || [])
+    }
   }
 
   const handleAddScore = async (e) => {
@@ -65,7 +77,6 @@ export default function Dashboard() {
       return
     }
 
-    // Add new score
     const { error } = await supabase
       .from('scores')
       .insert([
@@ -79,7 +90,6 @@ export default function Dashboard() {
     if (error) {
       alert('Error adding score: ' + error.message)
     } else {
-      // Keep only latest 5 scores (delete oldest if more than 5)
       const { data: allScores } = await supabase
         .from('scores')
         .select('*')
@@ -123,6 +133,55 @@ export default function Dashboard() {
     setCharityLoading(false)
   }
 
+  const uploadProof = async (winnerId, file) => {
+    if (!file) {
+      alert('Please select a file')
+      return
+    }
+
+    setUploading(true)
+    
+    const fileName = `${winnerId}_${Date.now()}.png`
+    const { error: uploadError } = await supabase.storage
+      .from('proofs')
+      .upload(fileName, file)
+
+    if (uploadError) {
+      alert('Upload error: ' + uploadError.message)
+      setUploading(false)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('winners')
+      .update({ proof_image: fileName })
+      .eq('id', winnerId)
+
+    if (updateError) {
+      alert('Error updating proof: ' + updateError.message)
+    } else {
+      alert('Proof uploaded successfully! Admin will verify soon.')
+      fetchUserWinnings()
+    }
+    
+    setUploading(false)
+  }
+
+  const handleDeleteScore = async (scoreId) => {
+    if (confirm('Are you sure you want to delete this score?')) {
+      const { error } = await supabase
+        .from('scores')
+        .delete()
+        .eq('id', scoreId)
+      
+      if (error) {
+        alert('Error deleting score: ' + error.message)
+      } else {
+        fetchUserData()
+      }
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -138,7 +197,7 @@ export default function Dashboard() {
       <h1 className="text-3xl font-bold text-gray-900 mb-8">My Dashboard</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column - Profile & Charity */}
+        {/* Left Column */}
         <div className="lg:col-span-1 space-y-6">
           {/* Subscription Card */}
           <div className="bg-white rounded-xl shadow-md p-6">
@@ -191,7 +250,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Right Column - Scores */}
+        {/* Right Column */}
         <div className="lg:col-span-2 space-y-6">
           {/* Add Score Form */}
           <div className="bg-white rounded-xl shadow-md p-6">
@@ -230,15 +289,72 @@ export default function Dashboard() {
               <p className="text-gray-500 text-center py-8">No scores added yet. Add your first score above!</p>
             ) : (
               <div className="space-y-3">
-                {scores.map((score, index) => (
+                {scores.map((score) => (
                   <div key={score.id} className="flex justify-between items-center border-b border-gray-100 py-3">
                     <div className="flex items-center gap-4">
                       <span className="text-2xl font-bold text-indigo-600">{score.score_value}</span>
                       <span className="text-gray-500">Stableford points</span>
                     </div>
-                    <span className="text-gray-500">
-                      {new Date(score.score_date).toLocaleDateString('en-IN')}
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-gray-500">
+                        {new Date(score.score_date).toLocaleDateString('en-IN')}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteScore(score.id)}
+                        className="text-red-500 hover:text-red-700 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Winnings Section */}
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h2 className="text-xl font-semibold text-gray-800 mb-4">🏆 My Winnings</h2>
+            {userWinnings.length === 0 ? (
+              <p className="text-gray-500 text-center py-4">No winnings yet. Keep playing and good luck!</p>
+            ) : (
+              <div className="space-y-4">
+                {userWinnings.map((win) => (
+                  <div key={win.id} className="border rounded-lg p-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold text-2xl text-green-600">₹{win.prize_amount?.toLocaleString()}</span>
+                      <span className={`px-2 py-1 text-xs rounded-full ${
+                        win.payment_status === 'paid' 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {win.payment_status === 'paid' ? 'Paid ✓' : 'Pending'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Draw Date: {win.draws?.draw_date ? new Date(win.draws.draw_date).toLocaleDateString() : 'N/A'}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      Numbers Matched: {win.match_count} out of 5
+                    </p>
+                    {win.payment_status !== 'paid' && !win.proof_image && (
+                      <div className="mt-3">
+                        <label className="block text-sm text-gray-600 mb-1">Upload Score Screenshot (Proof):</label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => uploadProof(win.id, e.target.files[0])}
+                          disabled={uploading}
+                          className="text-sm file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-sm file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                        />
+                        {uploading && <p className="text-xs text-gray-500 mt-1">Uploading...</p>}
+                      </div>
+                    )}
+                    {win.proof_image && (
+                      <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+                        ✓ Proof uploaded. Admin will verify soon.
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>

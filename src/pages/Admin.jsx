@@ -12,7 +12,8 @@ export default function Admin() {
     totalUsers: 0,
     activeSubscriptions: 0,
     totalScores: 0,
-    totalDonated: 0
+    totalDonated: 0,
+    totalPrizePool: 0
   })
 
   // Form states
@@ -56,7 +57,7 @@ export default function Admin() {
       .order('draw_date', { ascending: false })
     setDraws(drawsData || [])
 
-    // Fetch winners
+    // Fetch winners with user names
     const { data: winnersData } = await supabase
       .from('winners')
       .select('*, profiles(full_name)')
@@ -70,11 +71,15 @@ export default function Admin() {
     
     const activeUsers = usersData?.filter(u => u.subscription_status === 'active').length || 0
     
+    // Calculate total prize pool from winners
+    const totalPrize = winnersData?.reduce((sum, w) => sum + (w.prize_amount || 0), 0) || 0
+    
     setStats({
       totalUsers: usersData?.length || 0,
       activeSubscriptions: activeUsers,
       totalScores: scoresData?.length || 0,
-      totalDonated: 0 // Will calculate from subscriptions
+      totalDonated: 0,
+      totalPrizePool: totalPrize
     })
 
     setLoading(false)
@@ -92,26 +97,6 @@ export default function Admin() {
     } else {
       alert('Charity added successfully!')
       setNewCharity({ name: '', description: '', image_url: '', featured: false })
-      fetchAllData()
-    }
-  }
-
-  const handleUpdateCharity = async (charity) => {
-    const { error } = await supabase
-      .from('charities')
-      .update({
-        name: charity.name,
-        description: charity.description,
-        image_url: charity.image_url,
-        featured: charity.featured
-      })
-      .eq('id', charity.id)
-    
-    if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      alert('Charity updated!')
-      setEditingCharity(null)
       fetchAllData()
     }
   }
@@ -142,7 +127,6 @@ export default function Admin() {
   }
 
   const generateAlgorithmicNumbers = async () => {
-    // Get all user scores to find most common numbers
     const { data: allScores } = await supabase
       .from('scores')
       .select('score_value')
@@ -151,17 +135,14 @@ export default function Admin() {
       return generateRandomNumbers()
     }
 
-    // Count frequency of each score
     const frequency = {}
     allScores.forEach(score => {
       frequency[score.score_value] = (frequency[score.score_value] || 0) + 1
     })
 
-    // Get most frequent scores
     const sorted = Object.entries(frequency).sort((a, b) => b[1] - a[1])
     const topNumbers = sorted.slice(0, 5).map(item => parseInt(item[0]))
     
-    // If less than 5, fill with random
     while (topNumbers.length < 5) {
       const random = Math.floor(Math.random() * 45) + 1
       if (!topNumbers.includes(random)) {
@@ -181,7 +162,6 @@ export default function Admin() {
     }
     setDrawNumbers(numbers.map(n => n.toString()))
     
-    // Get all users with scores
     const { data: allUsers } = await supabase
       .from('profiles')
       .select('id, full_name')
@@ -190,7 +170,6 @@ export default function Admin() {
       .from('scores')
       .select('user_id, score_value')
     
-    // Calculate winners
     const userScores = {}
     allScores?.forEach(score => {
       if (!userScores[score.user_id]) {
@@ -199,16 +178,24 @@ export default function Admin() {
       userScores[score.user_id].push(score.score_value)
     })
     
+    const activeUsers = allUsers?.filter(u => u.subscription_status === 'active') || []
+    const prizePerUser = 500
+    const totalPrizePool = activeUsers.length * prizePerUser
+    
     const simulatedWinners = []
-    allUsers?.forEach(user => {
+    activeUsers?.forEach(user => {
       const userScoreList = userScores[user.id] || []
       const matches = userScoreList.filter(score => numbers.includes(score)).length
       if (matches >= 3) {
+        let prize = 0
+        if (matches === 5) prize = totalPrizePool * 0.4
+        else if (matches === 4) prize = totalPrizePool * 0.35
+        else if (matches === 3) prize = totalPrizePool * 0.25
         simulatedWinners.push({
           user_id: user.id,
           name: user.full_name,
           matches: matches,
-          prize: calculatePrize(matches, 10000) // Assuming ₹10,000 prize pool
+          prize: Math.floor(prize)
         })
       }
     })
@@ -216,15 +203,9 @@ export default function Admin() {
     setSimulationResult({
       numbers: numbers,
       winners: simulatedWinners,
-      totalWinners: simulatedWinners.length
+      totalWinners: simulatedWinners.length,
+      totalPrizePool: totalPrizePool
     })
-  }
-
-  const calculatePrize = (matches, totalPool) => {
-    if (matches === 5) return totalPool * 0.4
-    if (matches === 4) return totalPool * 0.35
-    if (matches === 3) return totalPool * 0.25
-    return 0
   }
 
   const publishDraw = async () => {
@@ -233,24 +214,85 @@ export default function Admin() {
       alert('Please enter 5 valid numbers (1-45)')
       return
     }
-    
-    const { error } = await supabase
+
+    // 1. Save draw
+    const drawDateValue = drawDate || new Date().toISOString().split('T')[0]
+    const { data: drawData, error: drawError } = await supabase
       .from('draws')
       .insert([{
-        draw_date: drawDate || new Date().toISOString().split('T')[0],
+        draw_date: drawDateValue,
         winning_numbers: numbers,
         draw_type: drawType,
         is_published: true
       }])
-    
-    if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      alert('Draw published successfully!')
-      fetchAllData()
-      setSimulationResult(null)
-      setDrawNumbers(['', '', '', '', ''])
+      .select()
+      .single()
+
+    if (drawError) {
+      alert('Error: ' + drawError.message)
+      return
     }
+
+    // 2. Get active users
+    const { data: activeUsers } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('subscription_status', 'active')
+
+    // 3. Get all scores
+    const { data: allScores } = await supabase
+      .from('scores')
+      .select('user_id, score_value')
+
+    // 4. Calculate prize pool
+    const prizePerUser = 500
+    const totalPrizePool = (activeUsers?.length || 0) * prizePerUser
+
+    // 5. Calculate matches
+    const userMatches = {}
+    allScores?.forEach(score => {
+      if (numbers.includes(score.score_value)) {
+        userMatches[score.user_id] = (userMatches[score.user_id] || 0) + 1
+      }
+    })
+
+    // 6. Create winners
+    const winnersList = []
+    for (const [userId, matches] of Object.entries(userMatches)) {
+      if (matches >= 3) {
+        let prize = 0
+        if (matches === 5) prize = totalPrizePool * 0.4
+        else if (matches === 4) prize = totalPrizePool * 0.35
+        else if (matches === 3) prize = totalPrizePool * 0.25
+        
+        winnersList.push({
+          user_id: userId,
+          draw_id: drawData.id,
+          match_count: matches,
+          prize_amount: Math.floor(prize),
+          payment_status: 'pending'
+        })
+      }
+    }
+
+    // 7. Save winners
+    if (winnersList.length > 0) {
+      const { error: winnersError } = await supabase
+        .from('winners')
+        .insert(winnersList)
+
+      if (winnersError) {
+        alert('Error saving winners: ' + winnersError.message)
+      } else {
+        alert(`Draw published! ${winnersList.length} winners found. Total prize pool: ₹${totalPrizePool}`)
+      }
+    } else {
+      alert(`Draw published! No winners this time. Jackpot will rollover to next month.`)
+    }
+
+    fetchAllData()
+    setSimulationResult(null)
+    setDrawNumbers(['', '', '', '', ''])
   }
 
   // User Functions
@@ -331,8 +373,8 @@ export default function Admin() {
             <div className="text-gray-600 mt-1">Total Scores</div>
           </div>
           <div className="bg-white rounded-xl shadow-md p-6">
-            <div className="text-3xl font-bold text-purple-600">{charities.length}</div>
-            <div className="text-gray-600 mt-1">Active Charities</div>
+            <div className="text-3xl font-bold text-purple-600">₹{stats.totalPrizePool}</div>
+            <div className="text-gray-600 mt-1">Total Prize Pool</div>
           </div>
         </div>
       )}
@@ -345,7 +387,7 @@ export default function Admin() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subscription</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charity %</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -392,7 +434,6 @@ export default function Admin() {
       {/* Charities Tab */}
       {activeTab === 'charities' && (
         <div>
-          {/* Add Charity Form */}
           <div className="bg-white rounded-xl shadow-md p-6 mb-8">
             <h2 className="text-xl font-semibold mb-4">Add New Charity</h2>
             <form onSubmit={handleAddCharity} className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -433,7 +474,6 @@ export default function Admin() {
             </form>
           </div>
 
-          {/* Charities List */}
           <div className="bg-white rounded-xl shadow-md overflow-hidden">
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
@@ -471,7 +511,6 @@ export default function Admin() {
       {/* Draws Tab */}
       {activeTab === 'draws' && (
         <div className="space-y-6">
-          {/* Run Draw Section */}
           <div className="bg-white rounded-xl shadow-md p-6">
             <h2 className="text-xl font-semibold mb-4">Run New Draw</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -496,7 +535,29 @@ export default function Admin() {
                 />
               </div>
             </div>
-            <div className="mt-4 flex gap-4">
+            
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Winning Numbers (1-45)</label>
+              <div className="flex gap-2">
+                {drawNumbers.map((num, idx) => (
+                  <input
+                    key={idx}
+                    type="number"
+                    min="1"
+                    max="45"
+                    value={num}
+                    onChange={(e) => {
+                      const newNumbers = [...drawNumbers]
+                      newNumbers[idx] = e.target.value
+                      setDrawNumbers(newNumbers)
+                    }}
+                    className="w-16 h-12 text-center border rounded-lg"
+                  />
+                ))}
+              </div>
+            </div>
+            
+            <div className="mt-6 flex gap-4">
               <button
                 onClick={runSimulation}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
@@ -512,7 +573,6 @@ export default function Admin() {
             </div>
           </div>
 
-          {/* Simulation Results */}
           {simulationResult && (
             <div className="bg-white rounded-xl shadow-md p-6">
               <h2 className="text-xl font-semibold mb-4">Simulation Results</h2>
@@ -525,25 +585,26 @@ export default function Admin() {
                     </span>
                   ))}
                 </div>
+                <p className="mt-2 text-sm text-gray-600">Total Prize Pool: ₹{simulationResult.totalPrizePool}</p>
               </div>
               <div>
                 <p className="font-medium mb-2">Potential Winners: ({simulationResult.totalWinners})</p>
-                <div className="space-y-2">
-                  {simulationResult.winners.slice(0, 5).map((winner, i) => (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {simulationResult.winners.slice(0, 10).map((winner, i) => (
                     <div key={i} className="flex justify-between items-center border-b py-2">
                       <span>{winner.name}</span>
-                      <span className="text-green-600 font-medium">{winner.matches} matches</span>
+                      <span className="text-orange-600 font-medium">{winner.matches} matches</span>
+                      <span className="text-green-600 font-medium">₹{winner.prize}</span>
                     </div>
                   ))}
-                  {simulationResult.totalWinners > 5 && (
-                    <p className="text-gray-500 text-sm">+{simulationResult.totalWinners - 5} more winners</p>
+                  {simulationResult.totalWinners > 10 && (
+                    <p className="text-gray-500 text-sm">+{simulationResult.totalWinners - 10} more winners</p>
                   )}
                 </div>
               </div>
             </div>
           )}
 
-          {/* Previous Draws */}
           <div className="bg-white rounded-xl shadow-md overflow-hidden">
             <h2 className="text-xl font-semibold p-6 pb-0">Previous Draws</h2>
             <div className="overflow-x-auto">
