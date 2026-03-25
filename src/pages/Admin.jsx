@@ -7,27 +7,35 @@ export default function Admin() {
   const [charities, setCharities] = useState([])
   const [draws, setDraws] = useState([])
   const [winners, setWinners] = useState([])
+  const [scores, setScores] = useState([])
   const [loading, setLoading] = useState(true)
+  const [editingUser, setEditingUser] = useState(null)
+  const [editingScore, setEditingScore] = useState(null)
+  const [editingCharity, setEditingCharity] = useState(null)
+  
+  // Stats
   const [stats, setStats] = useState({
     totalUsers: 0,
     activeSubscriptions: 0,
     totalScores: 0,
+    totalPrizePool: 0,
     totalDonated: 0,
-    totalPrizePool: 0
+    totalDraws: 0
   })
 
-  // Form states
+  // Draw form states
+  const [drawNumbers, setDrawNumbers] = useState(['', '', '', '', ''])
+  const [drawType, setDrawType] = useState('random')
+  const [drawDate, setDrawDate] = useState('')
+  const [simulationResult, setSimulationResult] = useState(null)
+
+  // Charity form states
   const [newCharity, setNewCharity] = useState({
     name: '',
     description: '',
     image_url: '',
     featured: false
   })
-  const [editingCharity, setEditingCharity] = useState(null)
-  const [drawNumbers, setDrawNumbers] = useState(['', '', '', '', ''])
-  const [drawType, setDrawType] = useState('random')
-  const [drawDate, setDrawDate] = useState('')
-  const [simulationResult, setSimulationResult] = useState(null)
 
   useEffect(() => {
     fetchAllData()
@@ -64,28 +72,105 @@ export default function Admin() {
       .order('created_at', { ascending: false })
     setWinners(winnersData || [])
 
-    // Calculate stats
+    // Fetch all scores
     const { data: scoresData } = await supabase
       .from('scores')
-      .select('*')
-    
+      .select('*, profiles(full_name)')
+      .order('created_at', { ascending: false })
+    setScores(scoresData || [])
+
+    // Calculate stats
     const activeUsers = usersData?.filter(u => u.subscription_status === 'active').length || 0
-    
-    // Calculate total prize pool from winners
     const totalPrize = winnersData?.reduce((sum, w) => sum + (w.prize_amount || 0), 0) || 0
     
     setStats({
       totalUsers: usersData?.length || 0,
       activeSubscriptions: activeUsers,
       totalScores: scoresData?.length || 0,
+      totalPrizePool: totalPrize,
       totalDonated: 0,
-      totalPrizePool: totalPrize
+      totalDraws: drawsData?.length || 0
     })
 
     setLoading(false)
   }
 
-  // Charity Functions
+  // ==================== USER MANAGEMENT ====================
+  const updateUserSubscription = async (userId, status) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ subscription_status: status })
+      .eq('id', userId)
+    
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert(`User subscription ${status === 'active' ? 'activated' : 'deactivated'}!`)
+      fetchAllData()
+    }
+  }
+
+  const updateUserCharity = async (userId, charityId) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ selected_charity_id: charityId })
+      .eq('id', userId)
+    
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('User charity updated!')
+      fetchAllData()
+    }
+  }
+
+  const updateUserPercentage = async (userId, percentage) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ charity_percentage: percentage })
+      .eq('id', userId)
+    
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('Charity percentage updated!')
+      fetchAllData()
+    }
+  }
+
+  // ==================== SCORE MANAGEMENT ====================
+  const updateScore = async (scoreId, newValue, newDate) => {
+    const { error } = await supabase
+      .from('scores')
+      .update({ score_value: newValue, score_date: newDate })
+      .eq('id', scoreId)
+    
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('Score updated!')
+      setEditingScore(null)
+      fetchAllData()
+    }
+  }
+
+  const deleteScore = async (scoreId) => {
+    if (confirm('Delete this score?')) {
+      const { error } = await supabase
+        .from('scores')
+        .delete()
+        .eq('id', scoreId)
+      
+      if (error) {
+        alert('Error: ' + error.message)
+      } else {
+        alert('Score deleted!')
+        fetchAllData()
+      }
+    }
+  }
+
+  // ==================== CHARITY MANAGEMENT ====================
   const handleAddCharity = async (e) => {
     e.preventDefault()
     const { error } = await supabase
@@ -101,8 +186,28 @@ export default function Admin() {
     }
   }
 
-  const handleDeleteCharity = async (id) => {
-    if (confirm('Are you sure you want to delete this charity?')) {
+  const updateCharity = async (charity) => {
+    const { error } = await supabase
+      .from('charities')
+      .update({
+        name: charity.name,
+        description: charity.description,
+        image_url: charity.image_url,
+        featured: charity.featured
+      })
+      .eq('id', charity.id)
+    
+    if (error) {
+      alert('Error: ' + error.message)
+    } else {
+      alert('Charity updated!')
+      setEditingCharity(null)
+      fetchAllData()
+    }
+  }
+
+  const deleteCharity = async (id) => {
+    if (confirm('Delete this charity? This will remove it from all users.')) {
       const { error } = await supabase
         .from('charities')
         .delete()
@@ -117,7 +222,7 @@ export default function Admin() {
     }
   }
 
-  // Draw Functions
+  // ==================== DRAW MANAGEMENT ====================
   const generateRandomNumbers = () => {
     const numbers = []
     for (let i = 0; i < 5; i++) {
@@ -164,7 +269,7 @@ export default function Admin() {
     
     const { data: allUsers } = await supabase
       .from('profiles')
-      .select('id, full_name')
+      .select('id, full_name, subscription_status')
     
     const { data: allScores } = await supabase
       .from('scores')
@@ -215,7 +320,6 @@ export default function Admin() {
       return
     }
 
-    // 1. Save draw
     const drawDateValue = drawDate || new Date().toISOString().split('T')[0]
     const { data: drawData, error: drawError } = await supabase
       .from('draws')
@@ -233,22 +337,18 @@ export default function Admin() {
       return
     }
 
-    // 2. Get active users
     const { data: activeUsers } = await supabase
       .from('profiles')
       .select('id, full_name')
       .eq('subscription_status', 'active')
 
-    // 3. Get all scores
     const { data: allScores } = await supabase
       .from('scores')
       .select('user_id, score_value')
 
-    // 4. Calculate prize pool
     const prizePerUser = 500
     const totalPrizePool = (activeUsers?.length || 0) * prizePerUser
 
-    // 5. Calculate matches
     const userMatches = {}
     allScores?.forEach(score => {
       if (numbers.includes(score.score_value)) {
@@ -256,7 +356,6 @@ export default function Admin() {
       }
     })
 
-    // 6. Create winners
     const winnersList = []
     for (const [userId, matches] of Object.entries(userMatches)) {
       if (matches >= 3) {
@@ -275,7 +374,6 @@ export default function Admin() {
       }
     }
 
-    // 7. Save winners
     if (winnersList.length > 0) {
       const { error: winnersError } = await supabase
         .from('winners')
@@ -287,7 +385,7 @@ export default function Admin() {
         alert(`Draw published! ${winnersList.length} winners found. Total prize pool: ₹${totalPrizePool}`)
       }
     } else {
-      alert(`Draw published! No winners this time. Jackpot will rollover to next month.`)
+      alert(`Draw published! No winners this time. Jackpot will rollover.`)
     }
 
     fetchAllData()
@@ -295,22 +393,7 @@ export default function Admin() {
     setDrawNumbers(['', '', '', '', ''])
   }
 
-  // User Functions
-  const updateUserSubscription = async (userId, status) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ subscription_status: status })
-      .eq('id', userId)
-    
-    if (error) {
-      alert('Error: ' + error.message)
-    } else {
-      alert('User subscription updated!')
-      fetchAllData()
-    }
-  }
-
-  // Winner Functions
+  // ==================== WINNER MANAGEMENT ====================
   const verifyWinner = async (winnerId, status) => {
     const { error } = await supabase
       .from('winners')
@@ -336,12 +419,12 @@ export default function Admin() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-      <p className="text-gray-600 mb-8">Manage users, charities, draws, and winners</p>
+      <p className="text-gray-600 mb-8">Complete control over users, scores, charities, draws, and winners</p>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200 mb-8">
-        <nav className="flex flex-wrap gap-4">
-          {['overview', 'users', 'charities', 'draws', 'winners'].map((tab) => (
+      <div className="border-b border-gray-200 mb-8 overflow-x-auto">
+        <nav className="flex gap-4">
+          {['overview', 'users', 'scores', 'charities', 'draws', 'winners'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -357,48 +440,57 @@ export default function Admin() {
         </nav>
       </div>
 
-      {/* Overview Tab */}
+      {/* OVERVIEW TAB */}
       {activeTab === 'overview' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <div className="text-3xl font-bold text-indigo-600">{stats.totalUsers}</div>
-            <div className="text-gray-600 mt-1">Total Users</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-indigo-600">{stats.totalUsers}</div>
+            <div className="text-gray-600 text-sm">Total Users</div>
           </div>
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <div className="text-3xl font-bold text-green-600">{stats.activeSubscriptions}</div>
-            <div className="text-gray-600 mt-1">Active Subscriptions</div>
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-green-600">{stats.activeSubscriptions}</div>
+            <div className="text-gray-600 text-sm">Active Subscriptions</div>
           </div>
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <div className="text-3xl font-bold text-blue-600">{stats.totalScores}</div>
-            <div className="text-gray-600 mt-1">Total Scores</div>
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-blue-600">{stats.totalScores}</div>
+            <div className="text-gray-600 text-sm">Total Scores</div>
           </div>
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <div className="text-3xl font-bold text-purple-600">₹{stats.totalPrizePool}</div>
-            <div className="text-gray-600 mt-1">Total Prize Pool</div>
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-purple-600">₹{stats.totalPrizePool}</div>
+            <div className="text-gray-600 text-sm">Prize Pool Distributed</div>
+          </div>
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-orange-600">{stats.totalDraws}</div>
+            <div className="text-gray-600 text-sm">Total Draws</div>
+          </div>
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="text-2xl font-bold text-pink-600">{charities.length}</div>
+            <div className="text-gray-600 text-sm">Active Charities</div>
           </div>
         </div>
       )}
 
-      {/* Users Tab */}
+      {/* USERS TAB - Full Management */}
       {activeTab === 'users' && (
         <div className="bg-white rounded-xl shadow-md overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subscription</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charity %</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subscription</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Charity %</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Selected Charity</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {users.map((user) => (
                   <tr key={user.id}>
-                    <td className="px-6 py-4">{user.full_name}</td>
-                    <td className="px-6 py-4 text-sm text-gray-500">{user.id?.slice(0, 8)}...</td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">{user.full_name}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{user.id?.slice(0, 8)}...</td>
+                    <td className="px-4 py-3">
                       <span className={`px-2 py-1 text-xs rounded-full ${
                         user.subscription_status === 'active' 
                           ? 'bg-green-100 text-green-800' 
@@ -407,8 +499,29 @@ export default function Admin() {
                         {user.subscription_status || 'inactive'}
                       </span>
                     </td>
-                    <td className="px-6 py-4">{user.charity_percentage}%</td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
+                      <input
+                        type="number"
+                        min="10"
+                        max="100"
+                        value={user.charity_percentage || 10}
+                        onChange={(e) => updateUserPercentage(user.id, parseInt(e.target.value))}
+                        className="w-16 border rounded px-1 py-0.5 text-sm"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={user.selected_charity_id || ''}
+                        onChange={(e) => updateUserCharity(user.id, e.target.value)}
+                        className="text-sm border rounded px-1 py-0.5"
+                      >
+                        <option value="">None</option>
+                        {charities.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
                       <button
                         onClick={() => updateUserSubscription(
                           user.id, 
@@ -431,7 +544,62 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Charities Tab */}
+      {/* SCORES TAB - View/Edit/Delete All Scores */}
+      {activeTab === 'scores' && (
+        <div className="bg-white rounded-xl shadow-md overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Score</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {scores.map((score) => (
+                  <tr key={score.id}>
+                    <td className="px-4 py-3">{score.profiles?.full_name || 'Unknown'}</td>
+                    <td className="px-4 py-3">
+                      {editingScore?.id === score.id ? (
+                        <input
+                          type="number"
+                          min="1"
+                          max="45"
+                          defaultValue={score.score_value}
+                          onBlur={(e) => updateScore(score.id, parseInt(e.target.value), score.score_date)}
+                          className="w-20 border rounded px-2 py-1"
+                          autoFocus
+                        />
+                      ) : (
+                        <span className="font-bold text-indigo-600">{score.score_value}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">{new Date(score.score_date).toLocaleDateString()}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => setEditingScore(score)}
+                        className="text-blue-600 hover:text-blue-800 text-sm mr-2"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteScore(score.id)}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* CHARITIES TAB - Full CRUD */}
       {activeTab === 'charities' && (
         <div>
           <div className="bg-white rounded-xl shadow-md p-6 mb-8">
@@ -479,25 +647,60 @@ export default function Admin() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Featured</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Featured</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {charities.map((charity) => (
                     <tr key={charity.id}>
-                      <td className="px-6 py-4 font-medium">{charity.name}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">{charity.description}</td>
-                      <td className="px-6 py-4">{charity.featured ? '⭐ Yes' : 'No'}</td>
-                      <td className="px-6 py-4">
-                        <button
-                          onClick={() => handleDeleteCharity(charity.id)}
-                          className="text-red-600 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
+                      <td className="px-4 py-3 font-medium">
+                        {editingCharity?.id === charity.id ? (
+                          <input
+                            value={editingCharity.name}
+                            onChange={(e) => setEditingCharity({ ...editingCharity, name: e.target.value })}
+                            className="border rounded px-2 py-1"
+                          />
+                        ) : (
+                          charity.name
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">
+                        {editingCharity?.id === charity.id ? (
+                          <textarea
+                            value={editingCharity.description}
+                            onChange={(e) => setEditingCharity({ ...editingCharity, description: e.target.value })}
+                            className="border rounded px-2 py-1"
+                          />
+                        ) : (
+                          charity.description
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {editingCharity?.id === charity.id ? (
+                          <input
+                            type="checkbox"
+                            checked={editingCharity.featured}
+                            onChange={(e) => setEditingCharity({ ...editingCharity, featured: e.target.checked })}
+                          />
+                        ) : (
+                          charity.featured ? '⭐ Yes' : 'No'
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {editingCharity?.id === charity.id ? (
+                          <>
+                            <button onClick={() => updateCharity(editingCharity)} className="text-green-600 mr-2">Save</button>
+                            <button onClick={() => setEditingCharity(null)} className="text-gray-500">Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => setEditingCharity(charity)} className="text-blue-600 mr-2">Edit</button>
+                            <button onClick={() => deleteCharity(charity.id)} className="text-red-600">Delete</button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -508,12 +711,12 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Draws Tab */}
+      {/* DRAWS TAB */}
       {activeTab === 'draws' && (
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-md p-6">
             <h2 className="text-xl font-semibold mb-4">Run New Draw</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Draw Type</label>
                 <select
@@ -536,7 +739,7 @@ export default function Admin() {
               </div>
             </div>
             
-            <div className="mt-6">
+            <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">Winning Numbers (1-45)</label>
               <div className="flex gap-2">
                 {drawNumbers.map((num, idx) => (
@@ -551,13 +754,13 @@ export default function Admin() {
                       newNumbers[idx] = e.target.value
                       setDrawNumbers(newNumbers)
                     }}
-                    className="w-16 h-12 text-center border rounded-lg"
+                    className="w-14 h-12 text-center border rounded-lg"
                   />
                 ))}
               </div>
             </div>
             
-            <div className="mt-6 flex gap-4">
+            <div className="flex gap-4">
               <button
                 onClick={runSimulation}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
@@ -593,13 +796,10 @@ export default function Admin() {
                   {simulationResult.winners.slice(0, 10).map((winner, i) => (
                     <div key={i} className="flex justify-between items-center border-b py-2">
                       <span>{winner.name}</span>
-                      <span className="text-orange-600 font-medium">{winner.matches} matches</span>
-                      <span className="text-green-600 font-medium">₹{winner.prize}</span>
+                      <span className="text-orange-600">{winner.matches} matches</span>
+                      <span className="text-green-600 font-bold">₹{winner.prize}</span>
                     </div>
                   ))}
-                  {simulationResult.totalWinners > 10 && (
-                    <p className="text-gray-500 text-sm">+{simulationResult.totalWinners - 10} more winners</p>
-                  )}
                 </div>
               </div>
             </div>
@@ -611,17 +811,16 @@ export default function Admin() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Winning Numbers</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Winning Numbers</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody>
                   {draws.map((draw) => (
                     <tr key={draw.id}>
-                      <td className="px-6 py-4">{new Date(draw.draw_date).toLocaleDateString()}</td>
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3">{new Date(draw.draw_date).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
                         <div className="flex gap-1">
                           {draw.winning_numbers?.map((num, i) => (
                             <span key={i} className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center text-sm">
@@ -630,12 +829,7 @@ export default function Admin() {
                           ))}
                         </div>
                       </td>
-                      <td className="px-6 py-4 capitalize">{draw.draw_type}</td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">
-                          Published
-                        </span>
-                      </td>
+                      <td className="px-4 py-3 capitalize">{draw.draw_type}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -645,27 +839,27 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Winners Tab */}
+      {/* WINNERS TAB */}
       {activeTab === 'winners' && (
         <div className="bg-white rounded-xl shadow-md overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Matches</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Prize Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Matches</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Prize</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {winners.map((winner) => (
                   <tr key={winner.id}>
-                    <td className="px-6 py-4">{winner.profiles?.full_name || 'Unknown'}</td>
-                    <td className="px-6 py-4">{winner.match_count} matches</td>
-                    <td className="px-6 py-4">₹{winner.prize_amount?.toLocaleString()}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">{winner.profiles?.full_name || 'Unknown'}</td>
+                    <td className="px-4 py-3">{winner.match_count} matches</td>
+                    <td className="px-4 py-3 font-bold text-green-600">₹{winner.prize_amount?.toLocaleString()}</td>
+                    <td className="px-4 py-3">
                       <span className={`px-2 py-1 text-xs rounded-full ${
                         winner.payment_status === 'paid' 
                           ? 'bg-green-100 text-green-800' 
@@ -674,7 +868,7 @@ export default function Admin() {
                         {winner.payment_status || 'pending'}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
                       {winner.payment_status !== 'paid' && (
                         <button
                           onClick={() => verifyWinner(winner.id, 'paid')}
